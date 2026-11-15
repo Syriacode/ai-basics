@@ -33,3 +33,12 @@ def next_token_table(client: LLMClient, prompt: str, k: int = 5) -> list[tuple[s
     if not tokens:
         return []
     return [(token, prob_from_logprob(logprob)) for token, logprob in tokens[0].top]
+
+
+def repeat_answers(client: LLMClient, question: str, n: int, temperature: float) -> list[str]:
+    """Ask the same question n times; return each answer with surrounding whitespace removed."""
+    messages: list[Message] = [{"role": "user", "content": question}]
+    return [
+        client.chat(messages, temperature=temperature, num_predict=20).text.strip()
+        for _ in range(n)
+    ]

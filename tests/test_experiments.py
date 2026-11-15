@@ -5,6 +5,7 @@ from ai_basics.experiments import (
     count_tokens,
     echo_tokens,
     next_token_table,
+    repeat_answers,
     show_tokens,
 )
 from ai_basics.llm import FakeClient, LLMResponse, TokenChoice
@@ -84,3 +85,26 @@ class NoTokensClient:
 
 def test_next_token_table_is_empty_when_there_are_no_tokens():
     assert next_token_table(NoTokensClient(), "Hello") == []
+
+
+def test_repeat_answers_strips_answers_and_asks_the_same_question_each_time():
+    client = FakeClient([" Shelly ", "Tank\n", "Shelly"])
+    question = "Suggest one name for a pet turtle."
+
+    answers = repeat_answers(client, question, n=3, temperature=1.0)
+
+    assert answers == ["Shelly", "Tank", "Shelly"]
+    assert len(client.calls) == 3
+    for call in client.calls:
+        assert call.method == "chat"
+        assert call.messages == [{"role": "user", "content": question}]
+        assert call.temperature == 1.0
+        assert call.num_predict == 20
+
+
+def test_repeat_answers_passes_the_temperature_through():
+    client = FakeClient()
+
+    repeat_answers(client, "Hi", n=2, temperature=0.0)
+
+    assert [call.temperature for call in client.calls] == [0.0, 0.0]
