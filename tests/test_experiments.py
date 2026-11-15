@@ -4,6 +4,8 @@ from ai_basics.experiments import (
     ECHO_SYSTEM,
     count_tokens,
     echo_tokens,
+    make_haystack,
+    needle_test,
     next_token_table,
     repeat_answers,
     show_tokens,
@@ -108,3 +110,39 @@ def test_repeat_answers_passes_the_temperature_through():
     repeat_answers(client, "Hi", n=2, temperature=0.0)
 
     assert [call.temperature for call in client.calls] == [0.0, 0.0]
+
+
+def test_make_haystack_has_the_secret_first_and_the_question_last():
+    lines = make_haystack("BLUE-42", 3).split("\n")
+
+    assert len(lines) == 5  # secret + 3 notes + question
+    assert lines[0] == "The secret code is BLUE-42. Remember it."
+    assert lines[1] == "Note 1: the computer lab is open from 8 am to 6 pm on weekdays."
+    assert lines[3] == "Note 3: the computer lab is open from 8 am to 6 pm on weekdays."
+    assert lines[-1] == "Question: what is the secret code? Answer with the code only."
+
+
+def test_make_haystack_line_count_for_the_lab():
+    assert len(make_haystack("BLUE-42", 120).split("\n")) == 122
+
+
+def test_needle_test_found_and_passes_the_window_size_through():
+    client = FakeClient(["The code is BLUE-42."])
+
+    result = needle_test(client, "BLUE-42", 5, num_ctx=1024)
+
+    assert result.found is True
+    assert result.num_ctx == 1024
+    assert result.input_tokens == 100  # FakeClient reports 100 input tokens
+    (call,) = client.calls
+    assert call.method == "chat"
+    assert call.messages == [{"role": "user", "content": make_haystack("BLUE-42", 5)}]
+    assert call.num_ctx == 1024
+    assert call.num_predict == 20
+
+
+def test_needle_test_not_found_when_the_model_makes_up_a_code():
+    result = needle_test(FakeClient(["BLUE-17"]), "BLUE-42", 5, num_ctx=1024)
+
+    assert result.found is False
+    assert result.answer == "BLUE-17"
