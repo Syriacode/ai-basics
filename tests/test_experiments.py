@@ -1,9 +1,12 @@
+import math
+
 import pytest
 
 from ai_basics.experiments import (
     ECHO_SYSTEM,
     OFF_TOPIC,
     SCOPE_RULE,
+    average_token_prob,
     count_out_of_scope,
     count_tokens,
     echo_tokens,
@@ -12,6 +15,7 @@ from ai_basics.experiments import (
     next_token_table,
     repeat_answers,
     rule_messages,
+    said_dont_know,
     show_tokens,
 )
 from ai_basics.llm import FakeClient, LLMResponse, TokenChoice
@@ -195,3 +199,42 @@ def test_count_out_of_scope_ignores_capitals_and_asks_every_question():
 
 def test_count_out_of_scope_is_zero_when_nobody_refuses():
     assert count_out_of_scope(FakeClient(), "none") == 0
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I don’t know.",  # curly apostrophe
+        "I DON'T KNOW",
+        "I do not know that paper.",
+        "I'm not sure that exists.",
+        "There is no information about it.",
+        "I am not aware of such a sort.",
+    ],
+)
+def test_said_dont_know_true_cases(text):
+    assert said_dont_know(text) is True
+
+
+@pytest.mark.parametrize("text", ["Dr. Marsh won the Turing Award in 2019.", ""])
+def test_said_dont_know_false_cases(text):
+    assert said_dont_know(text) is False
+
+
+def test_average_token_prob_is_the_mean_of_the_probabilities():
+    tokens = [
+        TokenChoice(token="a", logprob=0.0, top=[]),
+        TokenChoice(token="b", logprob=math.log(0.5), top=[]),
+    ]
+
+    assert average_token_prob(tokens) == pytest.approx(0.75)
+
+
+def test_average_token_prob_of_no_tokens_is_zero():
+    assert average_token_prob([]) == 0.0
+
+
+def test_average_token_prob_on_the_fake_paper_example():
+    tokens = FakeClient().complete("Binary search runs in O(", top_logprobs=1).tokens
+
+    assert average_token_prob(tokens) == pytest.approx(0.665, abs=0.001)

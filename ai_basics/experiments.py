@@ -109,3 +109,19 @@ def count_out_of_scope(client: LLMClient, where: Placement) -> int:
         if "out of scope" in reply.lower():
             count += 1
     return count
+
+
+DONT_KNOW_PHRASES = ("don't know", "do not know", "not sure", "no information", "not aware")
+
+
+def said_dont_know(text: str) -> bool:
+    """True when the text admits it doesn't know (a simple phrase match)."""
+    normalized = text.lower().replace("’", "'")  # a curly apostrophe becomes a straight one
+    return any(phrase in normalized for phrase in DONT_KNOW_PHRASES)
+
+
+def average_token_prob(tokens: Sequence[TokenChoice]) -> float:
+    """Mean of e^logprob over the tokens: how typical the wording was. 0.0 for no tokens."""
+    if not tokens:
+        return 0.0
+    return sum(prob_from_logprob(t.logprob) for t in tokens) / len(tokens)
