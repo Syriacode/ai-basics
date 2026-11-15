@@ -1,5 +1,13 @@
-from ai_basics.experiments import ECHO_SYSTEM, count_tokens, echo_tokens, show_tokens
-from ai_basics.llm import FakeClient, TokenChoice
+import pytest
+
+from ai_basics.experiments import (
+    ECHO_SYSTEM,
+    count_tokens,
+    echo_tokens,
+    next_token_table,
+    show_tokens,
+)
+from ai_basics.llm import FakeClient, LLMResponse, TokenChoice
 
 
 def choices(*tokens):
@@ -41,3 +49,38 @@ def test_echo_tokens_asks_for_an_exact_repeat_with_logprobs():
     ]
     assert call.top_logprobs == 1
     assert [t.token for t in tokens] == ["log"]  # FakeClient's one paper-example token
+
+
+def test_next_token_table_returns_token_probability_pairs():
+    client = FakeClient()
+
+    table = next_token_table(client, "Binary search runs in O(")
+
+    assert [token for token, _ in table] == ["log", "n", "1"]
+    assert [p for _, p in table] == pytest.approx([0.665, 0.245, 0.090], abs=0.001)
+    (call,) = client.calls
+    assert call.method == "complete"
+    assert call.prompt == "Binary search runs in O("
+    assert call.num_predict == 1
+    assert call.top_logprobs == 5
+
+
+def test_next_token_table_passes_k_through():
+    client = FakeClient()
+
+    next_token_table(client, "Hello", k=3)
+
+    assert client.calls[0].top_logprobs == 3
+
+
+class NoTokensClient:
+    """A stand-in model that returns no logprobs, like an old Ollama."""
+
+    model = "stub"
+
+    def complete(self, prompt, **kwargs):
+        return LLMResponse(text="", model="stub", input_tokens=1, output_tokens=0, latency_ms=0.0)
+
+
+def test_next_token_table_is_empty_when_there_are_no_tokens():
+    assert next_token_table(NoTokensClient(), "Hello") == []

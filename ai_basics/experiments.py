@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 
 from ai_basics.llm import LLMClient, Message, TokenChoice
+from ai_basics.sampling import prob_from_logprob
 
 ECHO_SYSTEM = "Repeat the user's text exactly. Output nothing else."
 
@@ -24,3 +25,11 @@ def echo_tokens(client: LLMClient, text: str) -> list[TokenChoice]:
         {"role": "user", "content": text},
     ]
     return client.chat(messages, top_logprobs=1).tokens
+
+
+def next_token_table(client: LLMClient, prompt: str, k: int = 5) -> list[tuple[str, float]]:
+    """The model's top k guesses for the next token, as (token, probability) pairs."""
+    tokens = client.complete(prompt, num_predict=1, top_logprobs=k).tokens
+    if not tokens:
+        return []
+    return [(token, prob_from_logprob(logprob)) for token, logprob in tokens[0].top]
