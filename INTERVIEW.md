@@ -1,21 +1,45 @@
 # Interview questions: ai-basics
 
-## Q1. TODO
+## Lab 1
 
-Answer: TODO
+### Q1. What is a token, and why do token counts matter in an LLM application?
 
-## Q2. TODO
+Answer: A token is a piece of text, such as a whole word, part of a word or a single character, that the model reads and writes as a number. A tokenizer cuts the text into tokens before the model sees it. In my lab, an English sentence of 23 characters was 7 tokens, while a Spanish sentence of 32 characters took 12. The number 1234567 took 7 tokens, one for each digit, but a code line of 31 characters took only 7, so the cost per character depends on the text. Context limits, latency and, on hosted APIs, price are all counted in tokens and not in words. So token counts tell me whether a prompt fits in the context window, how long a call will take and what it will cost. Because the count changes with language and content, I measure it and don't guess from the word count.
 
-Answer: TODO
+### Q2. Walk me through how an LLM generates a reply, from the prompt to the last token.
 
-## Q3. TODO
+Answer: The tokenizer first turns the prompt into a list of token numbers. The model gives a score, called a logit, to every token in its vocabulary, and softmax turns those scores into probabilities that add up to 1. One token is picked: the top one at temperature 0, or a random draw weighted by the probabilities otherwise. That token is added to the text, and the model runs again on the longer text. This loop, called autoregressive generation, repeats until the model writes an end token or reaches the output limit. In my lab, after "Binary search runs in O(" the top guess was ` log` with probability 0.510. A 200-token answer means 200 runs, which is why output tokens are slower, and on hosted APIs costlier, than input tokens.
 
-Answer: TODO
+### Q3. What does temperature do? Which temperature would you use for a classifier and for brainstorming, and is temperature 0 always deterministic?
 
-## Q4. TODO
+Answer: Temperature divides the scores before softmax, so low values make the favourite even more likely and high values flatten the odds. On my paper example with scores 2, 1 and 0, T=0.5 gives 0.867, 0.117 and 0.016, and T=2 gives 0.506, 0.307 and 0.186. For a classifier or JSON extraction I use 0, so the same input gives the same label and I can test it with evals. For brainstorming I use about 0.7 to 1, so the wording varies. In my lab, five answers at T=0 were identical and five at T=1 were all different. T=0 repeated itself on my own machine, but that is not guaranteed everywhere. Hosted APIs batch requests, and small floating-point differences can change which token wins a near tie, so I would not promise perfect determinism.
 
-Answer: TODO
+### Q4. What happens when a prompt is longer than the context window? How did you detect it, and how would you prevent it in production?
 
-## Q5. TODO
+Answer: The context window holds the input plus the output, so a prompt that is too long either leaves no room for the answer or gets cut. In my needle test, the same prompt with `num_ctx` 4096 used 2,587 input tokens and the model found the secret, BLUE-42. With `num_ctx` 1024 the model reported 514 input tokens, did not find the secret, and answered `'120'`, and there was no error. I detected it from the input token count (`prompt_eval_count`) being lower than the 2,587 the full prompt needs, and from the answer being wrong. I have not worked out why the count was 514 and not close to 1,024, so I treat the count as an alarm and not as proof of what was cut. To prevent it in production I would count tokens before sending, leave room for the output, and refuse, shorten or split the prompt when it does not fit. I would also use retrieval so only the relevant chunks are sent, and log `input_tokens` on every reply and alert when it nears the limit.
 
-Answer: TODO
+### Q5. LLM system design: you're building a course assistant for 2,000 students, and it must not make up policies or facts. Design it: what goes in the system prompt, where answers come from, how it says "I don't know", how you test it before launch, and what you monitor after.
+
+Answer: I would start from retrieval over the course documents, like my CourseMate, so answers come from sources and not from the model's memory. The system prompt would give the role and scope, say to answer only from the sources provided, to cite them, and to reply "I don't know" when they do not contain the answer. I would not trust the prompt alone, because a system message is a strong hint and not a security boundary. So the code would check the retrieval score and refuse before calling the model when no source is good enough, and it would check that the reply has citations. A confident answer is not evidence, because a high token probability only means the wording is typical. Before launch I would build a golden set of real student questions with expected answers, plus questions whose right answer is "I don't know" and adversarial ones like "ignore your instructions", and measure wrong-answer rate, refusal rate and citation accuracy on every change. After launch I would log each question, the sources retrieved, their scores and the token counts, track refusals and student feedback, and have a person review a sample of answers each week. I would also watch cost, latency and prompts that come close to the context limit, since 2,000 students will find the edge cases quickly.
+
+## Lab 2
+
+### Q6. What is tool calling? Who actually runs the tool, and how does the model know which tools exist?
+
+Answer: Tool calling means the model asks for a function to be run, and my code runs it. The model only ever writes text: a tool name and JSON arguments, such as `get_course_info` with the course "CS 101". My program (`run_tool` in `agent.py`) finds the function, runs it, and sends the result back as a new message. The model knows which tools exist because I send a description of each one, with its name, purpose and argument types written as JSON Schema, on every call. In Part A I did this with no API, only a system prompt asking for JSON, and 5 of 5 replies parsed. In Part B I used the chat API's `tools` field, and the descriptions cost 223 extra input tokens (42 without tools, 265 with). So the model decides what to call, but it never runs anything itself.
+
+### Q7. Walk me through an agent loop. How does it stop, and what happens when a tool fails?
+
+Answer: An agent loop starts with a system message and the user's question, then repeats: call the model, add its reply to the history, and check whether it asked for tools. If it asked for none, the loop stops with the reason `answer`. If it did, my code runs each tool, adds the result as a tool message, and calls the model again so it can read the results. The second stop is a safety limit, `max_steps`: in Part D1 with `max_steps=1` the model made one lookup, never read the result, and the user got "I hit the step limit (1) before finding an answer." When a tool fails, `run_tool` catches the exception and returns the error as text instead of crashing. In D2 the text said `unknown course 'CS 999'` and listed the real courses, and the model told the user the course was not found. One gap I found in D4 is that an empty reply from the model also counts as an answer, so the loop can stop with nothing useful.
+
+### Q8. Why does an agent use more tokens than a single call, and how would you reduce it?
+
+Answer: Every step sends the whole conversation again, plus the tool descriptions, so the input tokens add up. In Part C one question took two model calls, 284 and 356 input tokens, 640 in total, while a single call without tools took 42. In D4 the second step already read 503 tokens, because it carried three lookup results. Each extra step is another full read of the history, so a long run costs more than the number of steps suggests. To reduce the cost I would send fewer and shorter tool descriptions, keep tool results short, and trim or summarize old messages. On hosted APIs I would use prompt caching, so the repeated start of the history is cheaper. I would also keep `max_steps` low, and use a fixed workflow instead of an agent when the steps are always the same.
+
+### Q9. The model chooses the tool arguments. What can go wrong, and how do you make tools safe?
+
+Answer: The model writes the arguments, so they are untrusted input, like text typed by a stranger into a web form. It can pick the wrong tool, invent a course, send a huge or malicious expression, or be steered by text hidden in a tool result (prompt injection). In my agent a bad course name came back as an error and the model recovered, but that only works because the error was handled. To make tools safe I check the arguments against the schema and again inside the function, and `calculate()` walks the `ast` with a whitelist of `+ - * /`, so it never calls `eval` on model output. I give each tool the least power it needs: read-only by default, and a person approves anything that writes or sends. I also limit steps, time and tokens, and log every call. I test this with unit tests: one feeds `calculate()` a string like `__import__('os').system('echo hi')` and expects a `ValueError`, and another checks that an unknown course raises an error that lists the real ones.
+
+### Q10. LLM system design: design an agent that helps instructors answer routine student questions about a course (deadlines, syllabus, office hours) by looking things up in the course system and drafting a reply. Cover the tools, permissions (read vs. write), a human approving anything sent, stopping conditions, how you test it before launch (agent evals), and what you monitor after.
+
+Answer: The agent drafts replies for an instructor, and a person sends them. The tools are read-only `get_deadlines`, `get_syllabus_section`, `get_office_hours` and `search_announcements`, plus one write tool, `draft_reply`, that only saves a draft. There is no send tool, so the instructor reads and approves every reply, and permissions come from the instructor's login for that course, not from the model. The loop stops when it has a draft, at `max_steps`, at a time limit or token budget, or when the lookups find nothing, in which case it tells the instructor "I don't know" instead of guessing. Before launch I would build a golden set of real student questions with the expected tool calls and facts, plus no-answer and adversarial cases like "ignore your instructions", and score the right tool choice, a correct reply grounded in tool results, and the steps and tokens per question. I would run these in CI with a scripted `FakeClient`, as this repo does, and on the real model before each release. After launch I would monitor how often instructors approve or edit a draft, the tool error rate, steps and tokens per run, `max_steps` hits, latency and cost, and I would review a weekly sample.

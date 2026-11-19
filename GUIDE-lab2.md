@@ -234,8 +234,8 @@ The model writes the arguments, and the model's input can include text from user
 arguments are **untrusted**, like a form field on a website. Our calculator is the classic example:
 
 ```python
-eval("84 / 3")                                  # 28.0 — looks fine
-eval("__import__('os').system('rm -rf ~')")     # runs a shell command. Never do this.
+eval("84 / 3")  # 28.0 — looks fine
+eval("__import__('os').system('rm -rf ~')")  # runs a shell command. Never do this.
 ```
 
 So `calculate()` uses Python's **`ast`** module (abstract syntax tree) instead. `ast.parse("84 / 3")` turns the

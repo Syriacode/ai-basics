@@ -31,3 +31,12 @@ jobs:
 
       - name: Test
         run: python -m pytest -v
+
+      - name: Notebooks run top to bottom (fake model)
+        env:
+          AI_BASICS_PROVIDER: fake
+          MPLBACKEND: Agg
+        run: >-
+          python -m jupyter nbconvert --to notebook --execute --output-dir /tmp
+          notebooks/lab1_how_llms_work.ipynb
+          notebooks/lab2_tool_calling_and_agents.ipynb
