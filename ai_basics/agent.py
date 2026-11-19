@@ -61,4 +61,34 @@ def run_agent(
     verbose: bool = False,
 ) -> AgentResult:
     """Ask the model, run the tools it asks for, send the results back, repeat until it answers."""
-    raise NotImplementedError
+    messages: list[Message] = [
+        {"role": "system", "content": AGENT_SYSTEM},
+        {"role": "user", "content": question},
+    ]
+    input_tokens = 0
+    for step in range(1, max_steps + 1):
+        response = client.chat(messages, tools=schemas)
+        input_tokens += response.input_tokens
+        messages.append(assistant_message(response))
+        if verbose:
+            print(f"step {step} ({response.input_tokens} input tokens)")
+            show_message(messages[-1])
+
+        if not response.tool_calls:  # stop 1: the model answered in words
+            return AgentResult(response.text, "answer", step, input_tokens, messages)
+
+        for call in response.tool_calls:
+            messages.append(
+                {"role": "tool", "tool_name": call.name, "content": run_tool(call, tools)}
+            )
+            if verbose:
+                show_message(messages[-1])
+
+    # stop 2: the safety limit
+    return AgentResult(
+        f"I hit the step limit ({max_steps}) before finding an answer.",
+        "max_steps",
+        max_steps,
+        input_tokens,
+        messages,
+    )
