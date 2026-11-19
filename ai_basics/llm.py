@@ -26,6 +26,14 @@ class TokenChoice:
 
 
 @dataclass(frozen=True)
+class ToolCall:
+    """The model asked to run the tool `name` with these keyword arguments."""
+
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class LLMResponse:
     text: str
     model: str
