@@ -21,7 +21,8 @@ py -m ruff format --check .
 
 ## Plan
 
-- `GUIDE.md` holds the step-by-step plan once it's added.
+- `GUIDE.md` is the lab 1 guide.
+- `GUIDE-lab2.md` is the lab 2 guide (tool calling and agents from scratch).
 
 ## Environment
 
