@@ -4,7 +4,15 @@ import math
 import httpx
 import pytest
 
-from ai_basics.llm import FakeClient, LLMError, OllamaClient, TokenChoice
+from ai_basics.llm import (
+    FakeClient,
+    LLMError,
+    OllamaClient,
+    TokenChoice,
+    ToolCall,
+    assistant_message,
+)
+from ai_basics.tools import TOOL_SCHEMAS
 
 MESSAGES = [{"role": "user", "content": "What is a token?"}]
 
@@ -187,3 +195,132 @@ def test_fake_client_returns_the_paper_example_when_asked():
     probs = [math.exp(logprob) for _, logprob in choice.top]
     assert probs == pytest.approx([0.665, 0.245, 0.090], abs=0.001)
     assert FakeClient().complete("x").tokens == []
+
+
+# ---- tool calling ----
+
+COURSE_CALL = ToolCall("get_course_info", {"course": "CS 101"})
+
+TOOL_CALL_REPLY = {
+    "model": "qwen2.5:3b",
+    "message": {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {"function": {"name": "get_course_info", "arguments": {"course": "CS 101"}}}
+        ],
+    },
+    "done": True,
+    "prompt_eval_count": 250,
+    "eval_count": 20,
+}
+
+
+def reply_with_arguments(arguments):
+    call = {"function": {"name": "calculate", "arguments": arguments}}
+    message = {"role": "assistant", "content": "", "tool_calls": [call]}
+    return {**TOOL_CALL_REPLY, "message": message}
+
+
+def test_chat_without_tools_sends_no_tools_key():
+    requests = []
+
+    client_with(recording_handler(requests, CHAT_REPLY)).chat(MESSAGES)
+
+    assert "tools" not in json.loads(requests[0].content)
+
+
+def test_chat_with_tools_sends_them_and_parses_the_tool_call():
+    requests = []
+    client = client_with(recording_handler(requests, TOOL_CALL_REPLY))
+
+    response = client.chat(MESSAGES, tools=TOOL_SCHEMAS)
+
+    assert json.loads(requests[0].content)["tools"] == TOOL_SCHEMAS
+    assert response.text == ""
+    assert response.tool_calls == [COURSE_CALL]
+    assert response.input_tokens == 250
+
+
+def test_reply_without_tool_calls_gives_an_empty_list():
+    assert client_with(recording_handler([], CHAT_REPLY)).chat(MESSAGES).tool_calls == []
+    assert client_with(recording_handler([], GENERATE_REPLY)).complete("Hi").tool_calls == []
+
+
+def test_string_arguments_are_parsed():
+    # OpenAI sends the arguments as a JSON string, not an object.
+    reply = reply_with_arguments('{"expression": "84 / 3"}')
+
+    response = client_with(recording_handler([], reply)).chat(MESSAGES)
+
+    assert response.tool_calls == [ToolCall("calculate", {"expression": "84 / 3"})]
+
+
+@pytest.mark.parametrize("arguments", ["not json", "[1, 2]", '"just text"', 28])
+def test_arguments_that_are_not_a_json_object_are_an_error(arguments):
+    client = client_with(recording_handler([], reply_with_arguments(arguments)))
+
+    with pytest.raises(LLMError):
+        client.chat(MESSAGES)
+
+
+def test_assistant_message_of_plain_text_has_no_tool_calls_key():
+    response = FakeClient(["hi"]).chat(MESSAGES)
+
+    assert assistant_message(response) == {"role": "assistant", "content": "hi"}
+
+
+def test_assistant_message_keeps_tool_calls_in_ollamas_format():
+    response = FakeClient([[COURSE_CALL]]).chat(MESSAGES)
+
+    assert assistant_message(response) == {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {"function": {"name": "get_course_info", "arguments": {"course": "CS 101"}}}
+        ],
+    }
+
+
+def test_assistant_message_round_trips_through_the_client():
+    message = assistant_message(FakeClient([[COURSE_CALL]]).chat(MESSAGES))
+    reply = {**CHAT_REPLY, "message": message}
+
+    response = client_with(recording_handler([], reply)).chat(MESSAGES)
+
+    assert response.tool_calls == [COURSE_CALL]
+
+
+def test_fake_client_can_script_tool_calls():
+    fake = FakeClient([[COURSE_CALL], "28 per section"])
+
+    first = fake.chat(MESSAGES, tools=TOOL_SCHEMAS)
+    second = fake.chat(MESSAGES)
+
+    assert (first.text, first.tool_calls) == ("", [COURSE_CALL])
+    assert (second.text, second.tool_calls) == ("28 per section", [])
+    assert fake.calls[0].tools == TOOL_SCHEMAS
+    assert fake.calls[1].tools is None
+
+
+def test_fake_client_records_a_copy_of_the_messages():
+    fake = FakeClient()
+    history = [{"role": "user", "content": "q"}]
+
+    fake.chat(history)
+    history.append({"role": "assistant", "content": "a"})
+    history[0]["content"] = "changed"
+
+    assert fake.calls[0].messages == [{"role": "user", "content": "q"}]
+
+
+def test_fake_client_copy_reaches_inside_tool_calls():
+    fake = FakeClient()
+    call = ToolCall("get_course_info", {"course": "CS 101"})
+    history = [assistant_message(FakeClient([[call]]).chat(MESSAGES))]
+
+    fake.chat(history)
+    history[0]["tool_calls"][0]["function"]["arguments"]["course"] = "CS 999"
+
+    recorded = fake.calls[0].messages[0]["tool_calls"][0]["function"]["arguments"]
+    assert recorded == {"course": "CS 101"}
